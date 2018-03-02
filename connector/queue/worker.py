@@ -220,6 +220,7 @@ class WorkerWatcher(threading.Thread):
 
     def __init__(self):
         super(WorkerWatcher, self).__init__()
+        self._workers_lock = threading.Lock()
         self._workers = {}
 
     def _new(self, db_name):
@@ -235,8 +236,9 @@ class WorkerWatcher(threading.Thread):
     def _delete(self, db_name):
         """ Delete a worker associated with a database """
         if db_name in self._workers:
-            # the worker will exit (it checks ``worker_lost()``)
-            del self._workers[db_name]
+            with self._workers_lock:
+                # the worker will exit (it checks ``worker_lost()``)
+                del self._workers[db_name]
 
     def worker_for_db(self, db_name):
         return self._workers.get(db_name)
@@ -308,9 +310,10 @@ class WorkerWatcher(threading.Thread):
     def run(self):
         """ `WorkerWatcher`'s main loop """
         while 1:
-            self._update_workers()
-            for db_name, worker in self._workers.items():
-                self.check_alive(db_name, worker)
+            with self._workers_lock:
+                self._update_workers()
+                for db_name, worker in self._workers.items():
+                    self.check_alive(db_name, worker)
             time.sleep(WAIT_CHECK_WORKER_ALIVE)
 
     def check_alive(self, db_name, worker):
