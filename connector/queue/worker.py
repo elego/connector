@@ -68,6 +68,49 @@ class Worker(threading.Thread):
         threading.current_thread().dbname = db_name
         self.uuid = unicode(uuid.uuid4())
         self.watcher = watcher_
+        self._name = "Connector Worker %s" % threading.current_thread()
+
+    def db_lock(self, timeout=-1):
+        """returns a database session in case of success, else None"""
+        t_start = time.time()
+        lock_id = 28428
+        got_lock = False
+        session_hdl = ConnectorSessionHandler(self.db_name, openerp.SUPERUSER_ID)
+        session = session_hdl.session()
+        if timeout < 0:
+            session.cr.execute('SELECT pg_advisory_xact_lock(%s)' %(lock_id))
+            t_end = time.time()
+            _logger.debug("%s.db_lock() lock succeeded after waiting %s ms lock_id %s" %\
+                          (self._name, t_end * 1000 - t_start * 1000, lock_id))
+            return session
+        i = 1
+        while i <= timeout:
+            session.cr.execute('SELECT pg_try_advisory_xact_lock(%s)' %(lock_id))
+            got_lock = session.cr.fetchone()[0]
+            t_end = time.time()
+            if got_lock:
+                _logger.debug("%sdb_lock_pg_try_advisory_lock() lock succeeded after waiting %s ms lock_id %s timeout=%s i=%s" %\
+                              (self._name, t_end * 1000 - t_start * 1000, lock_id, timeout, i))
+                break
+            else:
+                _logger.debug(("%s.db_lock() lock failed after waiting %s ms lock_id %s timeout=%s i=%s " + \
+                              "type(i)=%s type(timeout)=%s (i <= timeout)=%s, retrying in one second") %\
+                              (self._name, t_end * 1000 - t_start * 1000, lock_id, timeout, i, type(i), type(timeout), (i <= timeout)))
+                time.sleep(1)
+            i = i + 1
+        if not got_lock:
+            _logger.debug("%s.db_lock() lock attempt timed out after waiting %s ms lock_id %s timeout=%s i=%s" %\
+                          (self._name, t_end * 1000 - t_start * 1000, lock_id, timeout, i))
+        if got_lock:
+            return session
+        return None
+
+    def db_unlock(self, session):
+        if not cr:
+            _logger.error("%s.db_unlock() called without session", self_name)
+            return
+        session.commit()
+        _logger.debug("%s.db_unlock() done for session %s", self_name, session)
 
     def run_job(self, job):
         """ Execute a job """
@@ -178,16 +221,25 @@ class Worker(threading.Thread):
 
         Wait for jobs and execute them sequentially.
         """
-        while 1:
-            # check if the worker has to exit (db destroyed, connector
-            # uninstalled)
-            if self.watcher.worker_lost(self):
-                break
-            job = self.queue.dequeue()
-            try:
-                self.run_job(job)
-            except:
-                continue
+        lock_session = None
+        try:
+            while 1:
+                # check if the worker has to exit (db destroyed, connector
+                # uninstalled)
+                lock_session = self.db_lock()
+                if self.watcher.worker_lost(self):
+                    break
+                job = self.queue.dequeue()
+                try:
+                    self.run_job(job)
+                except:
+                    continue
+                finally:
+                    if lock_session:
+                        self.db_unlock(lock_session)
+        finally:
+            if lock_session:
+                self.db_unlock(lock_session)
 
     def enqueue_job_uuid(self, job_uuid):
         """ Enqueue a job:
@@ -220,6 +272,7 @@ class WorkerWatcher(threading.Thread):
 
     def __init__(self):
         super(WorkerWatcher, self).__init__()
+        self._workers_lock = threading.Lock()
         self._workers = {}
 
     def _new(self, db_name):
@@ -235,8 +288,9 @@ class WorkerWatcher(threading.Thread):
     def _delete(self, db_name):
         """ Delete a worker associated with a database """
         if db_name in self._workers:
-            # the worker will exit (it checks ``worker_lost()``)
-            del self._workers[db_name]
+            with self._workers_lock:
+                # the worker will exit (it checks ``worker_lost()``)
+                del self._workers[db_name]
 
     def worker_for_db(self, db_name):
         return self._workers.get(db_name)
@@ -308,9 +362,10 @@ class WorkerWatcher(threading.Thread):
     def run(self):
         """ `WorkerWatcher`'s main loop """
         while 1:
-            self._update_workers()
-            for db_name, worker in self._workers.items():
-                self.check_alive(db_name, worker)
+            with self._workers_lock:
+                self._update_workers()
+                for db_name, worker in self._workers.items():
+                    self.check_alive(db_name, worker)
             time.sleep(WAIT_CHECK_WORKER_ALIVE)
 
     def check_alive(self, db_name, worker):
