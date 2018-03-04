@@ -25,6 +25,7 @@
 
 from heapq import heappush, heappop
 import logging
+import threading
 from weakref import WeakValueDictionary
 
 from ..exception import ChannelNotFound
@@ -390,8 +391,8 @@ class Channel(object):
         This removes it from the channel queue.
         """
         self.remove(job)
-        _logger.debug("job %s marked done in channel %s",
-                      job.uuid, self)
+        _logger.debug("[%s] job %s marked done in channel %s",
+                      threading.current_thread(), job.uuid, self)
 
     def set_pending(self, job):
         """ Mark a job as pending.
@@ -405,8 +406,8 @@ class Channel(object):
             self._failed.remove(job)
             if self.parent:
                 self.parent.remove(job)
-            _logger.debug("job %s marked pending in channel %s",
-                          job.uuid, self)
+            _logger.debug("[%s] job %s marked pending in channel %s",
+                          threading.current_thread(), job.uuid, self)
 
     def set_running(self, job):
         """ Mark a job as running.
@@ -419,8 +420,8 @@ class Channel(object):
             self._failed.remove(job)
             if self.parent:
                 self.parent.set_running(job)
-            _logger.debug("job %s marked running in channel %s",
-                          job.uuid, self)
+            _logger.debug("[%s] job %s marked running in channel %s",
+                          threading.current_thread(), job.uuid, self)
 
     def set_failed(self, job):
         """ Mark the job as failed. """
@@ -430,8 +431,8 @@ class Channel(object):
             self._failed.add(job)
             if self.parent:
                 self.parent.remove(job)
-            _logger.debug("job %s marked failed in channel %s",
-                          job.uuid, self)
+            _logger.debug("[%s] job %s marked failed in channel %s",
+                          threading.current_thread(), job.uuid, self)
 
     def get_jobs_to_run(self, now):
         """ Get jobs that are ready to run in channel.
@@ -462,8 +463,8 @@ class Channel(object):
             if not job:
                 return
             self._running.add(job)
-            _logger.debug("job %s marked running in channel %s",
-                          job.uuid, self)
+            _logger.debug("[%s] job %s marked running in channel %s",
+                          threading.current_thread(), job.uuid, self)
             yield job
 
 
@@ -725,6 +726,8 @@ class ChannelManager(object):
 
     def notify(self, db_name, channel_name, uuid,
                seq, date_created, priority, eta, state):
+        _logger.debug("[%s] notify(%s, %s, %s, %s)", threading.current_thread(),
+                      db_name, channel_name, uuid, state)
         try:
             channel = self.get_channel_by_name(channel_name)
         except ChannelNotFound:
@@ -733,6 +736,7 @@ class ChannelManager(object):
                             channel_name, uuid)
             channel = self._root_channel
         job = self._jobs_by_uuid.get(uuid)
+        _logger.debug("[%s] notify: job = %s", threading.current_thread(), job)
         if job:
             # db_name is invariant
             assert job.db_name == db_name
@@ -745,8 +749,8 @@ class ChannelManager(object):
                     priority != job.priority or
                     eta != job.eta or
                     channel != job.channel):
-                _logger.debug("job %s properties changed, rescheduling it",
-                              uuid)
+                _logger.debug("[%s] job %s properties changed, rescheduling it",
+                              threading.current_thread(), uuid)
                 self.remove_job(uuid)
                 job = None
         if not job:
