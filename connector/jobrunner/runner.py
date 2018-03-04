@@ -175,9 +175,16 @@ def _async_http_get(port, db_name, job_uuid):
         try:
             # we are not interested in the result, so we set a short timeout
             # but not too short so we trap and log hard configuration errors
-            requests.get(url, timeout=1)
+            response = requests.get(url, timeout=1)
+
+            # raise_for_status will result in either nothing, a Client Error
+            # for HTTP Response codes between 400 and 500 or a Server Error
+            # for codes between 500 and 600
+            response.raise_for_status()
         except requests.Timeout:
-            set_job_pending()
+            _logger.error("[%s]_async_http_get(%s, %s, %s): timeout", 
+                          threading.current_thread(), port, db_name, job_uuid)
+            #set_job_pending()
         except:
             _logger.exception("exception in GET %s", url)
             set_job_pending()
@@ -195,6 +202,7 @@ class Database(object):
         self.has_connector = self._has_connector()
         if self.has_connector:
             self.has_channel = self._has_queue_job_column('channel')
+            _logger.warning('Initializing Database objects for: %s', db_name)
             self._initialize()
 
     def close(self):
@@ -320,25 +328,30 @@ class ConnectorRunner(object):
         for job in self.channel_manager.get_jobs_to_run(now):
             if self._stop:
                 break
-            _logger.info("asking Odoo to run job %s on db %s",
-                         job.uuid, job.db_name)
+            _logger.info("[%s] asking Odoo to run job %s on db %s",
+                         threading.current_thread(), job.uuid, job.db_name)
             self.db_by_name[job.db_name].set_job_enqueued(job.uuid)
             _async_http_get(self.port, job.db_name, job.uuid)
 
     def process_notifications(self):
+        _logger.debug("process_notifications[%s]", threading.current_thread())
         for db in self.db_by_name.values():
             while db.conn.notifies:
                 if self._stop:
+                    _logger.debug("[%s]process_notifications stopped", threading.current_thread())
                     break
                 notification = db.conn.notifies.pop()
                 uuid = notification.payload
                 job_datas = db.select_jobs('uuid = %s', (uuid,))
                 if job_datas:
+                    _logger.debug("[%s]process_notifications.notify(%s, ...)", threading.current_thread(), db.db_name)
                     self.channel_manager.notify(db.db_name, *job_datas[0])
                 else:
+                    _logger.debug("[%s]process_notifications.remove_job(%)", threading.current_thread(), uuid)
                     self.channel_manager.remove_job(uuid)
 
     def wait_notification(self):
+        _logger.debug("[%s]wait_notification", threading.current_thread())
         for db in self.db_by_name.values():
             if db.conn.notifies:
                 return
