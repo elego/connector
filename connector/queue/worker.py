@@ -307,6 +307,7 @@ class WorkerWatcher(threading.Thread):
 
     def run(self):
         """ `WorkerWatcher`'s main loop """
+        if config['stop_after_init']: return
         while 1:
             self._update_workers()
             for db_name, worker in self._workers.items():
