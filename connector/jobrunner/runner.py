@@ -163,7 +163,7 @@ def _async_http_get(port, db_name, job_uuid):
         # obtain an anonymous session
         _logger.info("obtaining an anonymous session for the job runner")
         url = 'http://localhost:%s/web/login?db=%s' % (port, db_name)
-        response = session.get(url, timeout=30)
+        response = session.get(url, timeout=60)
         response.raise_for_status()
 
     # Method to set failed job (due to timeout, etc) as pending,
