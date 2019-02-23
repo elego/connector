@@ -739,7 +739,11 @@ class ChannelManager(object):
         _logger.debug("[%s] notify: job = %s", threading.current_thread(), job)
         if job:
             # db_name is invariant
-            assert job.db_name == db_name
+            if job.db_name <> db_name:
+                _logger.error("[%s] job %s on wrong database (%s <> %s), setting to failed",
+                              threading.current_thread(), uuid, job.db_name, db_name)
+                job.channel.set_failed(job)
+                return
             # date_created is invariant
             assert job.date_created == date_created
             # if one of the job properties that influence
