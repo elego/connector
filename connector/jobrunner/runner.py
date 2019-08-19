@@ -360,7 +360,7 @@ class ConnectorRunner(object):
                     _logger.debug("[%s]process_notifications.notify(%s, ...)", threading.current_thread(), db.db_name)
                     self.channel_manager.notify(db.db_name, *job_datas[0])
                 else:
-                    _logger.debug("[%s]process_notifications.remove_job(%)", threading.current_thread(), uuid)
+                    _logger.debug("[%s]process_notifications.remove_job(%s)", threading.current_thread(), uuid)
                     self.channel_manager.remove_job(uuid)
 
     def wait_notification(self):
